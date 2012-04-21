@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# Submission link: http://www.udacity-forums.com/cs101/answer_link/66994/
 
 ################################################################################
 #
@@ -8,7 +9,6 @@
 from HTMLParser import HTMLParser
 from re import sub
 import urlparse
-import sys
 
 class LUPA_HTMLParser( HTMLParser):
     def __init__(self):
@@ -25,7 +25,7 @@ class LUPA_HTMLParser( HTMLParser):
         self.tags_STARTEND_ALT = ['area', 'img']
         self.tags_STARTEND_LINK = ['base', 'frame']
         self.tags_STARTEND_SPECIAL = ['meta']
-        self.tags_OPEN_CLOSE = ['acronym', 'b', 'bdo', 'big', 'blockquote',
+        self.tags_OPEN_CLOSE = ['acronym', 'abbr', 'b', 'bdo', 'big', 'blockquote',
                                 'body', 'button', 'caption', 'center', 'cite', 'code',
                                 'colgroup', 'dd', 'del', 'dfn', 'dir', 'div',
                                 'dl', 'dt', 'em', 'fieldset', 'font', 'form',
@@ -149,7 +149,10 @@ class LUPA_HTMLParser( HTMLParser):
         #print '[HTMLParser:] Page title:'+ ''.join(self.title).strip()
         #for link, txt in self.extracted_links:
         #    print '[HTMLParser:] Link:' + link + ' Anchor Text:' + ''.join(txt).strip()
-        return [''.join(self.__text).strip(), self.extracted_links, ''.join(self.title).strip()]
+        text = ''.join(self.__text).strip().lower()
+        text = sub('[~@#$%^&*-+|:;.?!,<>()"]', ' ', text)
+        text = sub('[ \t\r\n]+', ' ', text)
+        return [ text, self.extracted_links, ''.join(self.title).strip()]
 
 
 
@@ -224,8 +227,8 @@ def get_scope( url):
 #   tests if url is an hierarchical child (or at the same level) of the site
 #   site is a dict of the form { 'scheme': 'http', 'netloc': 'www.python.org', 'path': ''}
 #
-def is_child( site, page):
-    link = urlparse.urlparse( page)
+def is_child( site, url):
+    link = urlparse.urlparse( url)
     if link.netloc != site['netloc']:
         return False
     i = 0
@@ -239,33 +242,65 @@ def is_child( site, page):
             return False
         i += 1
     return True
+
+#
+#   is_inscope( scope, url)    
+#
+#   tests if url is within the crawling scope
+#
+def is_inscope( scope, url):
+    for s in scope:
+        if is_child( s, url):
+            return True
+    return False
     
-def crawl_web( seed, limits = [-1, 0, 0.0, 1.0]): # returns index, graph of inlinks
-    tocrawl = [seed]
-    crawled = []
-    graph = {}  # <url>, [list of pages it links to]
-    index = {}
+def crawl_web( scope, tocrawl, index, graph, limits = [-1, 0, 0.0, 1.0]): # returns index, graph of inlinks
+    tocrawl_next = []    # used for depth control
+    depth = 0
+    pages = 0
     max_pages, max_depth, max_time, time_delay = limits
+
     if max_time > 0.0: start_time = time()
-    while tocrawl and max_pages and (max_time == 0.0 or max_time > time()-start_time):
-        page = tocrawl.pop()
-        if page not in crawled:
-            if max_time > 0.0: print 'time = ', time()-start_time, ' max_time = ', max_time 
+    while tocrawl or tocrawl_next:
+        if not tocrawl:
+            #
+            #   Descent one more level (depth)
+            #
+            tocrawl = tocrawl_next
+            tocrawl_next = []
+            depth += 1
+            if max_depth >= 0 and depth > max_depth:
+                print 'Reached maximum depth. Interrupting crawler.'
+                break
+            
+        page = tocrawl.pop(0)
+        # Remove fragment portion from the url
+        page = urlparse.urldefrag(page)[0]
+        if not page in graph:
+            pages += 1
+            print 'Crawling page:', page
+            if max_time != 0.0: print 'time = ', time()-start_time, ' max_time = ', max_time 
             if max_pages > 0:
-                max_pages -= 1
-                print 'max_pages = ', max_pages
+                print 'Pages crawled:', pages, 'max_pages = ', max_pages
 
             # [ToDo:]Transform meta_data into a dictionary
             text, outlinks, meta_data = get_page( page)
             add_page_to_index( index, page, text)
-            # Need to filter outlinks only to current hierarchy
-            outlinks = [ l for l in outlinks if is_child( seed ,l[0])]
-            newlinks = [ l[0] for l in outlinks]
+            # Need to filter outlinks only to current scope
+            outlinks = [ [urlparse.urldefrag(l[0])[0],l[1]] for l in outlinks if is_inscope( scope, l[0])]
+            newlinks = [ urlparse.urldefrag(l[0])[0] for l in outlinks]
             graph[page] = outlinks
-            #union( tocrawl, newlinks)
-            tocrawl = list( set(tocrawl + newlinks))
-            crawled.append( page)
-    return index, graph
+            tocrawl_next = list( set(tocrawl_next + newlinks))
+            
+            if pages >= max_pages:
+                print 'Reached number of pages limit. Interrupting crawler.'
+                break
+            if max_time > 0.0 and max_time > time()-start_time:
+                print 'Reached time limit. Interrupting crawler.'
+                break
+
+    tocrawl = list( set(tocrawl + tocrawl_next))
+    return tocrawl, index, graph
 
 def compute_ranks( graph):
     d = 0.8 # damping factor
@@ -335,7 +370,7 @@ def main():
 
     cmdLine_parser.add_argument(     \
         '-d',                \
-        default = 0,         \
+        default = -1,         \
         type = int,          \
         dest = 'max_depth',  \
         metavar = 'DEPTH',   \
@@ -423,7 +458,7 @@ def main():
             # Do not load the ranks for now
             #ranks = pickle.load(args.infile)
             args.infile.close()
-            if index: print 'Found ', len(index), 'indexed pages.'
+            if index: print 'Found ', len(index), 'indexed words.'
             if tocrawl: print 'Found ', len(tocrawl), 'pages left to crawl in input file.'
         except:
             print '[Error:] Cannot read input index file.'
@@ -441,21 +476,20 @@ def main():
         scope = list( set( scope + args.scope))
     if not tocrawl:
         tocrawl = ['http://udacity.com/cs101x/urank/index.html']
-        scope.append('http://udacity.com/cs101x/urank/')
+        scope.append( get_scope('http://udacity.com/cs101x/urank/'))
     
     #
     #  Crawl
     #
     print 'Starting crawler with following parameters:'
     if args.max_pages > 0: print 'Max. Pages: ', args.max_pages
-    if args.max_depth > 0: print 'Max. Depth: ', args.max_depth
+    if args.max_depth > -1: print 'Max. Depth: ', args.max_depth
     if args.time > 0.0: print 'Max. Time(s): ', args.time
     print 'Max. Rate(urls/s): ', args.rate
-    #crawl_web( tocrawl, scope, index, graph, crawl_limits)
+    tocrawl, index, graph = crawl_web( scope, tocrawl, index, graph, crawl_limits)
     print 'Computing page ranks...'
     ranks = compute_ranks(graph)
     #for p in ranks: print p,ranks[p]
-    pprint(ranks)
 
     try:
         print 'Saving index to file...'
