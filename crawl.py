@@ -152,7 +152,7 @@ class LUPA_HTMLParser( HTMLParser):
         text = ''.join(self.__text).strip().lower()
         text = sub('[~@#$%^&*-+|:;.?!,<>()"]', ' ', text)
         text = sub('[ \t\r\n]+', ' ', text)
-        return [ text, self.extracted_links, ''.join(self.title).strip()]
+        return [ text, self.extracted_links, { 'title': ''.join(self.title).strip() }]
 
 
 
@@ -196,11 +196,6 @@ def add_page_to_index( index, url, content):
         else:
             index[keyword] = [url]
         
-def lookup(index, keyword):
-    if keyword in index:
-        return index[keyword]
-    else:
-        return None
 #
 #    get_scope( url)
 #
@@ -254,7 +249,7 @@ def is_inscope( scope, url):
             return True
     return False
     
-def crawl_web( scope, tocrawl, index, graph, limits = [-1, 0, 0.0, 1.0]): # returns index, graph of inlinks
+def crawl_web( scope, tocrawl, index, graph, url_info, limits = [-1, 0, 0.0, 1.0]): # returns index, graph of inlinks
     tocrawl_next = []    # used for depth control
     depth = 0
     pages = 0
@@ -287,9 +282,10 @@ def crawl_web( scope, tocrawl, index, graph, limits = [-1, 0, 0.0, 1.0]): # retu
             text, outlinks, meta_data = get_page( page)
             add_page_to_index( index, page, text)
             # Need to filter outlinks only to current scope
-            outlinks = [ [urlparse.urldefrag(l[0])[0],l[1]] for l in outlinks if is_inscope( scope, l[0])]
+            outlinks = [ [urlparse.urldefrag(l[0])[0],l[1]] for l in outlinks if is_inscope( scope, l[0]) and (l[0].endswith('.html') or l[0].endswith('.htm')) ]
             newlinks = [ urlparse.urldefrag(l[0])[0] for l in outlinks]
             graph[page] = outlinks
+            url_info[page] = meta_data
             tocrawl_next = list( set(tocrawl_next + newlinks))
             
             if pages >= max_pages:
@@ -300,7 +296,7 @@ def crawl_web( scope, tocrawl, index, graph, limits = [-1, 0, 0.0, 1.0]): # retu
                 break
 
     tocrawl = list( set(tocrawl + tocrawl_next))
-    return tocrawl, index, graph
+    return tocrawl, index, graph, url_info
 
 def compute_ranks( graph):
     d = 0.8 # damping factor
@@ -447,13 +443,15 @@ def main():
     tocrawl = []
     index = {}
     graph = {}
+    url_info = {}
     if args.infile:
         try:
             print 'Opening input index file for read...'
-            scope = pickle.load(args.infile)
-            tocrawl = pickle.load(args.infile)
-            index = pickle.load(args.infile)
-            graph = pickle.load(args.infile)
+            scope = pickle.load( args.infile)
+            tocrawl = pickle.load( args.infile)
+            index = pickle.load( args.infile)
+            graph = pickle.load( args.infile)
+            url_info = pickle.load( args.infile)
             # [ToDo:] Is there a way to use the previous ranks as starting point/make it incrementally?
             # Do not load the ranks for now
             #ranks = pickle.load(args.infile)
@@ -486,10 +484,16 @@ def main():
     if args.max_depth > -1: print 'Max. Depth: ', args.max_depth
     if args.time > 0.0: print 'Max. Time(s): ', args.time
     print 'Max. Rate(urls/s): ', args.rate
-    tocrawl, index, graph = crawl_web( scope, tocrawl, index, graph, crawl_limits)
+    tocrawl, index, graph, url_info = crawl_web( scope, tocrawl, index, graph, url_info, crawl_limits)
     print 'Computing page ranks...'
     ranks = compute_ranks(graph)
     #for p in ranks: print p,ranks[p]
+    print 'Sorting index...'
+    #
+    #   Sort results by rank
+    #
+    for keyword in index:
+        index[keyword].sort( key=lambda url: ranks[url], reverse=True)
 
     try:
         print 'Saving index to file...'
@@ -498,8 +502,10 @@ def main():
         pickle.dump( tocrawl, outfile)
         pickle.dump( index, outfile)
         pickle.dump( graph, outfile)
+        pickle.dump( url_info, outfile)        
         pickle.dump( ranks, outfile)
         outfile.close()
+        print 'Done.'
     except:
         print '[ERROR:] Failed to save index file.'
 

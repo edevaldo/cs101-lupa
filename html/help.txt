@@ -1,0 +1,9 @@
+
+Search Help:
+============
+
+Just enter the search terms in the search box and press "Search".
+
+Terms that are not found in the index are ignored.
+
+Exact search terms (between "") are processed but currently return the same results as normal search.
